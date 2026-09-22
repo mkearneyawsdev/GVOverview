@@ -329,12 +329,104 @@ DELIVERABLES:
 CURRENT OPEN ITEMS (awaiting user input):
 - [ ] Decide whether to reinstate the @ColumnList column-subset feature
 - [ ] Review and approve GVOverview_v2.sql and the new v2/ documentation
-- [ ] Confirm whether to commit the pending changes (v1/v2 folder reorg, docx removal,
-      GVOverview_v2.sql, and this log) to the repo
+
+Session 3 ended here; changes were committed and pushed (commits e638555, ee56e14).
+
+================================================================================
+SESSION 4: V3 FOLDER + EXECUTION-PLAN-INFORMED PERFORMANCE RE-ANALYSIS
+================================================================================
+
+Session Date: September 22, 2026 (continued)
+
+USER REQUEST 10: Manual file relocation (v1/v2 SQL files moved into their folders)
+User manually moved GVOverview_v1.sql, GVOverview_v1_VALIDATION.sql into v1/, and
+GVOverview_v2.sql into v2/, then asked Claude to review and commit/push.
+
+ACTION TAKEN:
+✓ Confirmed via diff against git history that all three moves were pure relocations
+  with no content changes
+✓ Committed (c9baadf) and pushed to origin/main
+
+---
+
+USER REQUEST 11: Create a v3 folder for the next set of changes
+"hey claude lets create a new v3 folder for the next set of changes"
+
+ACTION TAKEN:
+✓ Created empty v3/ folder (not committed - git doesn't track empty directories)
+✓ Asked what the v3 changes would be; user said "we are going to try something else"
+  (not yet specified at that point)
+
+---
+
+USER REQUEST 12: Redo the v1 performance analysis using a new execution plan file
+"i have added an execution plan xml file into the project please review it very
+carefully. For context its a plan for v1 of the sql. Redo the v1 analysis based on
+the new information in the explain plan file. Pay particular attention to anything
+that would affect performance."
+
+ACTION TAKEN:
+✓ Found "Execution plan.xml" (UTF-16 ShowPlan XML, ~3.65MB, 165 RelOp nodes) at the
+  project root; converted to UTF-8 and parsed with Python's ElementTree to extract
+  statement text, cost breakdown, warnings, missing-index recommendations, table
+  access methods, and parallelism info
+✓ Determined the plan is NOT for GVOverview_v1.sql as stated - its StatementText
+  begins "SELECT * FROM ( SELECT pb.[Company], ... )", the exact wrapper shape unique
+  to the ORIGINAL pre-refactor procedure's dynamic-SQL template (@QUERY = 'SELECT
+  **COLUMNS** FROM ( **SELECT** ) AS base ...'); neither v1.sql nor v2.sql have this
+  wrapper. Concluded the user's "v1 of the sql" refers to what this project files
+  under v1/ (GVOverview_Performance_Analysis_Report_v1.md, which analyzes the
+  ORIGINAL query) rather than the refactored GVOverview_v1.sql procedure, and
+  proceeded on that basis, stating the reasoning plainly in the new document so it
+  can be corrected if wrong
+✓ Key findings extracted from the plan:
+    - Estimated plan only (no RunTimeInformation/actual row counts)
+    - Compiled for a single-company call (Company_SK=1057 pushed down as a residual
+      predicate) - StatementEstRows=491,461, StatementSubTreeCost=1153.63
+    - CompileTime=2644ms, CompileCPU=2363ms, CompileMemory=~140MB for this one
+      dynamic SQL text
+    - DegreeOfParallelism=None, NonParallelPlanReason=CouldNotGenerateValidParallelPlan
+      despite cost far above the default parallelism threshold - likely caused by
+      Row-Level Security predicates reading SESSION_CONTEXT('UserId') (12 separate
+      joins to Sec.Fact_RowLevelGrants found; SecurityPolicyApplied=true)
+    - EBill ROW_NUMBER() requires sorting an estimated 4.5 million rows (~32% of
+      total query cost) - confirmed the original's recommended CTE-based fix does
+      NOT eliminate this (CTE vs subquery are optimizer-equivalent); only a
+      supporting index on Fact_EBill(CaseId, [Approved Date] DESC) would
+    - LEFT JOIN to vw_StatusDocs multiplies row count ~2.2x (222,165 -> 491,461)
+      because @Tracked's default (1) applies no [Is Tracking] filter at all -
+      confirmed via the unfiltered Fact_StatusDocs clustered index scan
+    - Zero missing-index recommendations, zero CONVERT_IMPLICIT warnings, zero
+      columns-with-no-statistics warnings in this plan
+✓ Wrote v3/GVOverview_Performance_Analysis_Report_v3.md: states the plan-identity
+  finding up front, revises original Issues #3, #4/#9, #11, #13 with the quantified
+  plan evidence (including the correction that CTEs don't fix the EBill sort), marks
+  Issue #21 resolved, and adds a new Issue #23 (RLS likely blocking parallelism -
+  not fixable via stored-procedure changes, needs the security-policy owner)
+✓ Moved "Execution plan.xml" into v3/ alongside the new report (matching the v1/v2
+  pattern of co-locating source evidence with its documentation) and updated the
+  report's internal reference accordingly
+✓ Left everything uncommitted pending user review
+
+DELIVERABLES:
+→ v3/GVOverview_Performance_Analysis_Report_v3.md
+→ v3/Execution plan.xml (moved from project root)
+
+CURRENT OPEN ITEMS (awaiting user input):
+- [ ] Confirm whether "the v1 analysis" was correctly interpreted as
+      v1/GVOverview_Performance_Analysis_Report_v1.md (analysis of the original SQL),
+      not a plan specific to GVOverview_v1.sql
+- [ ] Decide whether to pursue the Fact_EBill index, the @Tracked default question,
+      and/or escalate the RLS/parallelism finding
+- [ ] Capture an actual (not estimated) execution plan, and ideally one for
+      GVOverview_v1.sql/v2.sql directly, as a follow-up
+- [ ] Decide whether to reinstate the @ColumnList column-subset feature (carried over
+      from Session 3, still open)
+- [ ] Confirm whether to commit the v3/ additions to the repo
 
 ================================================================================
 END OF LOG
 ================================================================================
 
 This file will be updated and appended as the conversation continues.
-Last Updated: 2026-09-22 (Session 3)
+Last Updated: 2026-09-22 (Session 4)
