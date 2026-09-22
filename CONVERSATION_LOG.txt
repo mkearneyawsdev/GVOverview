@@ -577,15 +577,38 @@ DELIVERABLES:
 → v4/GVOverview_Performance_Analysis_Report_v4.md
 → v4/DEPLOYMENT_GUIDE_v4.md
 
+v4/ was committed and pushed (a540e48).
+
+---
+
+USER REQUEST 18: Project-wide summary document
+"ok that is a lot of change lets create a summary document in the mail folder
+that contains an overview of all the changes so far."
+
+ACTION TAKEN:
+✓ Interpreted "mail folder" as the project root (only sensible reading - no "mail"
+  folder exists or was referenced anywhere in this project)
+✓ Wrote PROJECT_SUMMARY.md at the repo root: a single cross-version entry point
+  covering the whole arc (original -> v1 -> v2 -> v3 -> v4), a version comparison
+  table, a consolidated "what the execution plan actually showed" recap, an explicit
+  verified-vs-not-verified section, all outstanding items collected in one place, and
+  a file/folder map - distinct from CONVERSATION_LOG.txt, which remains the raw
+  session-by-session working record
+✓ Left uncommitted pending user review
+
+DELIVERABLES:
+→ PROJECT_SUMMARY.md
+
 CURRENT OPEN ITEMS (awaiting user input):
-- [ ] Review the v4 doc set and GVOverview_v4.sql together
-- [ ] Confirm whether to commit/push the v4 folder
+- [ ] Confirm whether to commit/push PROJECT_SUMMARY.md
 - [ ] Capture a fresh execution plan for GVOverview_v3.sql/v4.sql to confirm the
       EBillLatest fix's actual effect (carried over, still open)
 - [ ] Decide whether to run v3/GVOverview_v3_Fact_EBill_Index.sql in a test/staging
       environment (carried over, still open)
 - [ ] Decide whether to pursue the @Tracked default question and/or escalate the
       RLS/parallelism finding (carried over, still open)
+- [ ] Deploy and test any version against a real SQL Server instance (nothing in
+      this project has been execution-tested yet)
 
 ================================================================================
 END OF LOG
