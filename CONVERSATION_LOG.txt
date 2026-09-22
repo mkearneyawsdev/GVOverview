@@ -181,8 +181,160 @@ Code Quality Improvements:
 • Better query plan caching (single plan for all parameter combinations)
 
 ================================================================================
+SESSION 3: REPOSITORY REVIEW, COMMIT & V2 CUSTOM FIELDS REINSTATEMENT
+================================================================================
+
+Session Date: September 22, 2026
+Environment: /home/mkearneyawsdev/Projects/GVOverview (Linux, git repo, branch main)
+Note: Sessions 1-2 above ran on a Windows machine (D:\projects\GVOverview\). The files
+they produced were later added to this Linux git repository in Session 3.
+
+USER REQUEST 6: Review new files and add them to the repo
+"hey claude i have added a lot of new files to the project please go ahead and review
+them carefully so that you understand what was done then add them to the repo"
+
+ACTION TAKEN:
+✓ Reviewed every untracked/modified file: CONVERSATION_LOG.txt, DEPLOYMENT_GUIDE_v1.md/.docx,
+  GVOverview_Performance_Analysis_Report.md/.docx, GVOverview_v1.sql, GVOverview_v1_VALIDATION.sql,
+  GVOverview_v1_SYNTAX_ANALYSIS.md/.docx, REFACTORING_SUMMARY.md/.docx
+✓ Confirmed the modification to GVOverview.sql was line-ending only (LF -> CRLF); content
+  byte-identical via whitespace-ignoring diff
+✓ Confirmed all four .docx files are genuine Microsoft Word 2007+ documents
+✓ Flagged three issues found during review (not fixed, since the task was to review/add, not fix):
+    1. GVOverview_v1.sql adds OPTION (RECOMPILE), which forces a plan recompile every execution -
+       this directly contradicts the "better query plan caching" benefit claimed elsewhere in the
+       docs for removing dynamic SQL
+    2. The v1 refactor didn't just optimize the custom-fields feature, it deleted it entirely
+       (100+ lines removed) - a functional change, not just a performance tweak
+    3. GVOverview_v1_VALIDATION.sql doesn't execute or parse anything - it's PRINT statements
+       asserting "PASS" for each check, not an automated validator; its "15/15 passed" result
+       should be read as a manual review checklist, not a compiler/test result
+✓ Staged and committed all 12 new/modified files to git
+
+DELIVERABLES:
+→ Git commit e638555 "Add refactored GVOverview_v1 stored procedure and supporting docs"
+  (all Session 1-2 files now tracked on branch main)
+
+---
+
+USER REQUEST 7: Build a V2 that reinstates the custom-fields feature entirely
+"good spot claude lets work on a V2 version of the code which reinstates the
+custom-fields feature entirely"
+
+ACTION TAKEN:
+✓ Read the original GVOverview.sql custom-fields mechanism in full: dbo.Dim_Company stores an
+  optional per-company display label for 50 "Profile" + 50 "Project" custom field slots; when
+  exactly one company is selected the label gets embedded directly into the result column's alias
+  (e.g. [CustomProfileValue3:Visa Sponsor]); with zero or multiple companies selected, all 100
+  columns are returned as NULL with generic names
+✓ Asked the user to choose between (a) reinstating that exact original output shape via a small,
+  isolated dynamic-SQL step layered on top of v1's static query, or (b) a fully static redesign
+  that returns generic column names plus a separate label lookup - user chose (a), exact original
+  behavior
+✓ Designed and wrote GVOverview_v2.sql:
+    - Kept 100% of v1's static SQL for parameter validation, filtering, joins, CTEs, and
+      pagination unchanged (verified byte-identical to v1 via diff on the shared sections)
+    - Added Phase 3B: resolves the 100 custom-field labels from dbo.Dim_Company via
+      CROSS APPLY (VALUES ...) unpivot, only when @CompanyCount = 1
+    - Reinstated the 100 CustomProfileValueN / CustomProjectValueN columns in the main static
+      query as CASE expressions, value suppressed to NULL unless exactly one company is selected
+      (matches original behavior)
+    - Main query now materializes its paginated output into a #Results temp table instead of
+      returning directly
+    - Added Phase 7: a short, targeted sp_executeSQL step that relabels only the 100 custom
+      columns (reading column names back from #Results via tempdb.sys.columns, aliasing with
+      QUOTENAME()-escaped labels from Dim_Company); skipped entirely - plain static
+      "SELECT * FROM #Results" - unless exactly one company is selected, so the original's
+      large dynamic-SQL surface area is not reintroduced
+✓ Verified structural integrity of the new file: balanced parentheses/brackets, matching
+  BEGIN/END counts, and diffed the FROM/JOIN/WHERE/ORDER BY/pagination sections against
+  GVOverview_v1.sql to confirm they were carried over with zero unintended changes
+✓ Flagged (not fixed, out of scope for this request): @ColumnList is declared as a parameter in
+  both v1 and v2 but has never been wired up to anything since v1 - the original used it to let
+  callers request a subset of columns; that behavior was also silently dropped in the v1 refactor
+✓ Held off on git add/commit - GVOverview_v2.sql was left uncommitted pending user review
+
+DELIVERABLES:
+→ GVOverview_v2.sql (written, NOT yet committed - awaiting user go-ahead)
+
+CURRENT OPEN ITEMS (awaiting user input):
+- [ ] Decide whether to reinstate the @ColumnList column-subset feature too
+- [ ] Review and approve GVOverview_v2.sql, then confirm whether to commit it to the repo
+
+---
+
+USER REQUEST 8: Organize the v1/v2 markdown docs into version-labeled folders
+"ok lets do some cleanup. in the folder you will see some markdown documents created
+when we did the first analysis of the sql file. create a v2 folder and move them there
+then I would like you to create equivalent v2 files in a new v2 folder. Add v1 to the
+filenames if they do not already contain v1 in the name."
+
+ACTION TAKEN:
+✓ Flagged that the request as literally written named the same "v2" folder for both
+  the old-docs move and the new-docs creation, which conflicted with the trailing
+  instruction to add "v1" to filenames; asked the user to confirm - they confirmed the
+  intended structure was a v1/ folder for the archived originals and a separate v2/
+  folder for the new documents
+✓ Discovered the four .docx files (DEPLOYMENT_GUIDE_v1.docx,
+  GVOverview_Performance_Analysis_Report.docx, GVOverview_v1_SYNTAX_ANALYSIS.docx,
+  REFACTORING_SUMMARY.docx) were missing from the working directory despite being
+  committed in git (shown as "deleted" by git status) - restored them via
+  `git checkout --` before proceeding, since they were unmodified in git history and
+  also still present in the user's ~/Downloads/GVOverview-...zip export, confirming no
+  content was lost
+✓ Created v1/ and v2/ folders
+✓ Used `git mv` to move the four original analysis documents (.md + .docx) into v1/,
+  renaming GVOverview_Performance_Analysis_Report.* and REFACTORING_SUMMARY.* to
+  include "_v1" (DEPLOYMENT_GUIDE_v1.* and GVOverview_v1_SYNTAX_ANALYSIS.* already had
+  "v1" in the name, so only moved, not renamed)
+✓ Authored four new v2-equivalent markdown documents in v2/, each written as a
+  companion to its v1/ counterpart (documenting deltas rather than duplicating
+  unchanged v1 content):
+    - v2/REFACTORING_SUMMARY_v2.md
+    - v2/GVOverview_v2_SYNTAX_ANALYSIS.md
+    - v2/GVOverview_Performance_Analysis_Report_v2.md (analyzes the performance cost of
+      reinstating custom fields, not a repeat of the original pre-v1 issue analysis)
+    - v2/DEPLOYMENT_GUIDE_v2.md
+✓ Left everything staged/unstaged in the working tree - not yet committed
+
+DELIVERABLES:
+→ v1/ folder (4 documents x .md + .docx, renamed where needed)
+→ v2/ folder (4 new markdown documents)
+→ Restored .docx files (previously missing from disk, now recovered from git)
+
+CURRENT OPEN ITEMS (awaiting user input):
+- [ ] Decide whether to reinstate the @ColumnList column-subset feature
+- [ ] Review and approve GVOverview_v2.sql and the new v2/ documentation
+- [ ] Confirm whether to commit the pending changes (v1/v2 folder reorg + GVOverview_v2.sql
+      + this log) to the repo
+
+---
+
+USER REQUEST 9: Remove the .docx files
+"remove the .docx files from the project as they are no longer required"
+
+ACTION TAKEN:
+✓ Confirmed the four .docx files still staged in v1/ (from Session 3's move) had no
+  content changes versus the committed originals (binary diff showed pure add/rename,
+  no edits) before force-removing them, so nothing was discarded that wasn't already
+  identical in git history
+✓ `git rm -f` on all four: v1/DEPLOYMENT_GUIDE_v1.docx,
+  v1/GVOverview_Performance_Analysis_Report_v1.docx, v1/GVOverview_v1_SYNTAX_ANALYSIS.docx,
+  v1/REFACTORING_SUMMARY_v1.docx
+✓ Corresponding .md files in v1/ left untouched
+
+DELIVERABLES:
+→ v1/ now contains only the four .md documents (docx removed)
+
+CURRENT OPEN ITEMS (awaiting user input):
+- [ ] Decide whether to reinstate the @ColumnList column-subset feature
+- [ ] Review and approve GVOverview_v2.sql and the new v2/ documentation
+- [ ] Confirm whether to commit the pending changes (v1/v2 folder reorg, docx removal,
+      GVOverview_v2.sql, and this log) to the repo
+
+================================================================================
 END OF LOG
 ================================================================================
 
 This file will be updated and appended as the conversation continues.
-Last Updated: 2026-09-15 (Session 2)
+Last Updated: 2026-09-22 (Session 3)
