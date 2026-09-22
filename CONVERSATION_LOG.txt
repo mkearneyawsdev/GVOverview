@@ -494,18 +494,98 @@ DELIVERABLES:
 → v3/GVOverview_Performance_Analysis_Report_v3.md (updated in place, not yet
   re-committed)
 
+GVOverview_v3.sql and the updated report were committed and pushed (928cf64).
+
+---
+
+USER REQUEST 15: Is @ColumnList missing from v3?
+"one final thing is the '@ColumnList' parameter functionallity missing from
+version3?"
+
+ACTION TAKEN:
+✓ Verified directly (grep) rather than answering from memory: @ColumnList is
+  declared as a parameter in v3.sql but never used anywhere in the query - confirmed
+  dead, same as v1/v2. Confirmed the original GVOverview.sql DID implement it (via
+  its **COLUMNS** dynamic-SQL placeholder), so this is a genuine dropped feature, not
+  a misunderstanding
+✓ Explained why: v1 removed the placeholder-based wrapper the original used to inject
+  a caller-chosen column list, and no version since has replaced it
+
+---
+
+USER REQUEST 16: Implement it as v4
+"Implement it as v4"
+
+ACTION TAKEN:
+✓ Created v4/GVOverview_v4.sql as sp_GVOverview_v4, built on top of v3.sql (EBillLatest
+  fix retained) - verified via diff that the entire FROM/JOIN/WHERE/ORDER BY/pagination
+  block is byte-identical to v3
+✓ Added Phase 2B: normalizes @ColumnList into a @RequestedColumns table variable,
+  stripping brackets per-item (more robust than the original's all-or-nothing bracket
+  check) - never concatenated into SQL text, only ever compared against real column
+  metadata later
+✓ Extended Phase 7 (the existing custom-field-label dynamic-SQL step from v2/v3) to
+  also filter columns: the dynamic path now runs when EITHER @CompanyCount=1 (custom
+  labels) OR @ColumnList matched at least one real column; otherwise the original
+  fast static "SELECT * FROM #Results" path is unchanged. If @ColumnList matches
+  nothing, it's ignored and all columns are returned rather than an empty result
+✓ Documented a real limitation: @ColumnList matches against custom fields' BASE
+  column names (e.g. CustomProfileValue3), not their company-specific labeled alias
+  (e.g. CustomProfileValue3:Visa Sponsor), since labeling happens after filtering
+✓ Updated header/changelog comments and debug output (new ColumnFilterApplied line)
+✓ Verified parens/brackets balanced; did not create a full v4 doc set (deployment
+  guide/performance report/refactoring summary) since the request was specifically
+  to implement the feature, not to produce documentation - flagged as available if
+  wanted
+✓ Left uncommitted pending user review
+
+DELIVERABLES:
+→ v4/GVOverview_v4.sql
+
+---
+
+USER REQUEST 17: Document v4
+"yes go ahead and document v4"
+
+ACTION TAKEN:
+✓ Followed the v2 doc-set pattern (full 4-document package) rather than v3's
+  (analysis-only), since this request - like v2's - is documenting a specific new
+  SQL version, not redoing an analysis
+✓ Wrote v4/REFACTORING_SUMMARY_v4.md: why v4 exists, what changed/didn't since v3,
+  @ColumnList behavior table, the known custom-field-label-matching limitation,
+  validation status, file locations, next steps
+✓ Wrote v4/GVOverview_v4_SYNTAX_ANALYSIS.md: companion to v2's (still valid for
+  custom-field syntax) - validates Phase 2B's per-item bracket-stripping (a
+  correction of the original's all-or-nothing bracket check) and Phase 7's extended
+  branching logic, including a traced truth table of all 4 (@CompanyCount,
+  @ColumnList-match) combinations
+✓ Wrote v4/GVOverview_Performance_Analysis_Report_v4.md: notes @ColumnList is the
+  first feature in this project with a genuine potential performance BENEFIT (less
+  data transferred for narrow requests), not just cost - contrasts with v2's custom
+  fields, which were pure added cost; also documents that Phase 5 still computes all
+  ~240 columns into #Results regardless of @ColumnList (a deliberate scope boundary,
+  not an oversight - explained why)
+✓ Wrote v4/DEPLOYMENT_GUIDE_v4.md: notes this is also the FIRST deployment guide
+  covering v3's EBillCaseFilter change (v3 never got one), so it carries over that
+  test scenario in addition to v4's own @ColumnList scenarios (valid subset,
+  bracketed input, no-match fallback, combined with single-company custom fields)
+✓ Left all four documents uncommitted pending user review
+
+DELIVERABLES:
+→ v4/REFACTORING_SUMMARY_v4.md
+→ v4/GVOverview_v4_SYNTAX_ANALYSIS.md
+→ v4/GVOverview_Performance_Analysis_Report_v4.md
+→ v4/DEPLOYMENT_GUIDE_v4.md
+
 CURRENT OPEN ITEMS (awaiting user input):
-- [ ] Capture a fresh execution plan for GVOverview_v3.sql (ideally both an
-      all-companies call and a single-company call) to confirm the EBillLatest fix
-      actually reduces the Sort/Window Aggregate cost, and to check whether the
-      @AllCompanies=1 dead-code-elimination assumption holds
+- [ ] Review the v4 doc set and GVOverview_v4.sql together
+- [ ] Confirm whether to commit/push the v4 folder
+- [ ] Capture a fresh execution plan for GVOverview_v3.sql/v4.sql to confirm the
+      EBillLatest fix's actual effect (carried over, still open)
 - [ ] Decide whether to run v3/GVOverview_v3_Fact_EBill_Index.sql in a test/staging
-      environment as a complementary change
+      environment (carried over, still open)
 - [ ] Decide whether to pursue the @Tracked default question and/or escalate the
-      RLS/parallelism finding
-- [ ] Decide whether to reinstate the @ColumnList column-subset feature (carried over
-      from Session 3, still open)
-- [ ] Confirm whether to commit GVOverview_v3.sql and the updated report
+      RLS/parallelism finding (carried over, still open)
 
 ================================================================================
 END OF LOG
