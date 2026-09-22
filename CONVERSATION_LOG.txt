@@ -458,19 +458,54 @@ DELIVERABLES:
 → v3/GVOverview_Performance_Analysis_Report_v3.md (corrected in place, not yet
   re-committed)
 
+v3/GVOverview_v3_Fact_EBill_Index.sql and the corrected report were committed and
+pushed (1979c17).
+
+---
+
+USER REQUEST 14: Implement the EBillLatest company filter fix
+"implement the EBillLatest company filter fix"
+
+ACTION TAKEN:
+✓ Created v3/GVOverview_v3.sql as sp_GVOverview_v3, built on top of v2.sql (custom
+  fields retained) - verified via diff that every part of v2 not touched by this fix
+  is byte-identical
+✓ Added a new EBillCaseFilter CTE (SELECT DISTINCT company_sk, CaseId FROM
+  rpt.vw_ProjectBeneficiary WHERE BeneficiaryIncludedInProject = 1) ahead of
+  EBillLatest, and changed EBillLatest's WHERE clause to
+  "AND (@AllCompanies = 1 OR EXISTS (... fc.company_sk IN (SELECT Id FROM
+  @Company_SKs) ...))" - narrows the ROW_NUMBER() computation to only the requested
+  company's cases instead of the entire warehouse's EBill history
+✓ Documented in the new CTE's own comment that the @AllCompanies=1 (default/ALL)
+  case still has to enumerate every CaseId, and that whether OPTION (RECOMPILE)'s
+  runtime constant-folding lets the optimizer skip the EXISTS branch entirely in that
+  case is not guaranteed by SQL Server's documentation - flagged as something to
+  verify with a fresh plan, not assumed
+✓ Updated the procedure's header/changelog comments (v3 entry explaining the fix and
+  its Issue #3 justification) and the trailing index-recommendations comment block to
+  point at GVOverview_v3_Fact_EBill_Index.sql as a complementary (not substitute) fix
+✓ Updated v3/GVOverview_Performance_Analysis_Report_v3.md to mark this recommendation
+  implemented, with an explicit note that it has not yet been verified against a real
+  execution plan - still reasoned from evidence, not measured
+✓ Left everything uncommitted pending user review
+
+DELIVERABLES:
+→ v3/GVOverview_v3.sql
+→ v3/GVOverview_Performance_Analysis_Report_v3.md (updated in place, not yet
+  re-committed)
+
 CURRENT OPEN ITEMS (awaiting user input):
-- [ ] Confirm whether to pursue the EBillLatest company-filter query change (the
-      actual highest-value fix for the ~32%-of-cost Sort) as an actionable v3 change
-- [ ] Decide whether to run v3/GVOverview_v3_Fact_EBill_Index.sql (still a legitimate,
-      smaller win on its own) in a test/staging environment and re-capture a plan to
-      confirm its effect
+- [ ] Capture a fresh execution plan for GVOverview_v3.sql (ideally both an
+      all-companies call and a single-company call) to confirm the EBillLatest fix
+      actually reduces the Sort/Window Aggregate cost, and to check whether the
+      @AllCompanies=1 dead-code-elimination assumption holds
+- [ ] Decide whether to run v3/GVOverview_v3_Fact_EBill_Index.sql in a test/staging
+      environment as a complementary change
 - [ ] Decide whether to pursue the @Tracked default question and/or escalate the
       RLS/parallelism finding
-- [ ] Capture an actual (not estimated) execution plan, and ideally one for
-      GVOverview_v1.sql/v2.sql directly, as a follow-up
 - [ ] Decide whether to reinstate the @ColumnList column-subset feature (carried over
       from Session 3, still open)
-- [ ] Confirm whether to commit the new index script and the corrected report
+- [ ] Confirm whether to commit GVOverview_v3.sql and the updated report
 
 ================================================================================
 END OF LOG

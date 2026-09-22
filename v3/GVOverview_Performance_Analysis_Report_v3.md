@@ -3,8 +3,9 @@
 **Companion to / redo of**: `../v1/GVOverview_Performance_Analysis_Report_v1.md` ("the v1
 analysis")
 **New input for this pass**: `Execution plan.xml` (in this same folder)
-**Status**: Analysis only - no code changes in this document. Findings here are the
-input for whatever gets built next.
+**Status**: Analysis document. The highest-value fix identified below (Issue #3's
+`EBillCaseFilter`) has since been implemented in `v3/GVOverview_v3.sql` - see the
+"Recommendations Going Forward" section at the end for status of each item.
 
 ---
 
@@ -319,13 +320,14 @@ predicate function, not a change to `GVOverview*.sql`. Concretely:
 
 ## Recommendations Going Forward
 
-1. **Filter the `EBillLatest` CTE/subquery by the requested company before computing
-   `ROW_NUMBER()`.** This is the highest-value fix for the ~32%-of-total-cost Sort,
-   since it's currently computed over the entire warehouse's EBill history on every
-   call regardless of `@CompanyIds`. It's a query change, not an index - see Issue #3
-   above. Apply `v3/GVOverview_v3_Fact_EBill_Index.sql`'s covering index alongside it
-   for a smaller, complementary win on the base table read (it does not by itself
-   remove the Sort - see that script's header for why).
+1. ~~Filter the `EBillLatest` CTE/subquery by the requested company before computing
+   `ROW_NUMBER()`.~~ **Implemented in `v3/GVOverview_v3.sql`** via a new
+   `EBillCaseFilter` CTE (see that file's header and Phase 4 comments). Apply
+   `v3/GVOverview_v3_Fact_EBill_Index.sql`'s covering index alongside it for a
+   smaller, complementary win on the base table read (it does not by itself remove
+   the Sort - see that script's header for why). **Not yet verified against a real
+   execution plan** - this remains estimated/reasoned from the plan evidence, not
+   measured; see the note below.
 2. **Confirm the `@Tracked` default is intentional** with whoever owns the report's
    requirements, given it roughly doubles row count for every default-parameter call.
    If it is intentional, consider renaming/documenting it so a caller doesn't
