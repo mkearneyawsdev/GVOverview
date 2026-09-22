@@ -412,17 +412,65 @@ DELIVERABLES:
 → v3/GVOverview_Performance_Analysis_Report_v3.md
 → v3/Execution plan.xml (moved from project root)
 
+User confirmed the "which query is this plan for" finding was correct (it is for the
+original SQL). v3/ was committed and pushed (f4c49e5).
+
+---
+
+USER REQUEST 13: Create the Fact_EBill index script
+"create the Fact_EBill index script"
+
+ACTION TAKEN:
+✓ Before writing the script, re-examined the plan's column-level detail (not just the
+  cost summary used for the report) and found the report's Issue #3 recommendation
+  was WRONG as written:
+    - `CaseId` is not a column on dbo.Fact_EBill at all - the plan's Sort/OrderBy
+      names the sort key as [Dim_Project].[CaseId], only available after Fact_EBill
+      is joined to Dim_Project via Project_SK. A CREATE INDEX naming CaseId directly
+      on Fact_EBill would fail with "invalid column name."
+    - Even an index on Fact_EBill's own Project_SK would likely NOT remove the Sort,
+      because the joins between Fact_EBill and the point where CaseId becomes known
+      (to Dim_Company, Dim_Beneficiary, Dim_Project, and twice to Dim_User) are all
+      Hash Match, which does not preserve input row order.
+    - Also newly noticed: StatementOptmEarlyAbortReason="TimeOut" on the statement -
+      the optimizer's search for this query timed out before finishing, so the plan
+      shape shouldn't be assumed provably optimal even where it looks reasonable
+✓ Determined the real root cause: the EBillLatest CTE (v1/v2) / equivalent derived
+  table (original) computes ROW_NUMBER() over the ENTIRE rpt.vw_EBill view with no
+  company filter at all - true in all three versions equally - which is why
+  Fact_EBill is read via a full unfiltered Clustered Index Scan before any company
+  filtering happens. Pushing the company filter into that CTE before windowing is
+  logically safe (doesn't change which row is "latest" per case) and is the
+  actual highest-value fix - a query change, not an index
+✓ Corrected v3/GVOverview_Performance_Analysis_Report_v3.md's Issue #3 section, the
+  executive summary table, and the final recommendations list to reflect this,
+  rather than silently shipping the wrong index
+✓ Wrote v3/GVOverview_v3_Fact_EBill_Index.sql: a corrected, narrower nonclustered
+  index on Fact_EBill(Project_SK, ApprovedDate DESC) INCLUDE (FeeStatus) - reduces
+  I/O on the existing full-table scan (narrower than the clustered index) but is
+  explicitly documented as NOT removing the Sort; includes an existence check and a
+  verification query
+✓ Reported the correction transparently to the user rather than presenting the
+  (working but limited) index as if it were the complete fix originally promised
+
+DELIVERABLES:
+→ v3/GVOverview_v3_Fact_EBill_Index.sql
+→ v3/GVOverview_Performance_Analysis_Report_v3.md (corrected in place, not yet
+  re-committed)
+
 CURRENT OPEN ITEMS (awaiting user input):
-- [ ] Confirm whether "the v1 analysis" was correctly interpreted as
-      v1/GVOverview_Performance_Analysis_Report_v1.md (analysis of the original SQL),
-      not a plan specific to GVOverview_v1.sql
-- [ ] Decide whether to pursue the Fact_EBill index, the @Tracked default question,
-      and/or escalate the RLS/parallelism finding
+- [ ] Confirm whether to pursue the EBillLatest company-filter query change (the
+      actual highest-value fix for the ~32%-of-cost Sort) as an actionable v3 change
+- [ ] Decide whether to run v3/GVOverview_v3_Fact_EBill_Index.sql (still a legitimate,
+      smaller win on its own) in a test/staging environment and re-capture a plan to
+      confirm its effect
+- [ ] Decide whether to pursue the @Tracked default question and/or escalate the
+      RLS/parallelism finding
 - [ ] Capture an actual (not estimated) execution plan, and ideally one for
       GVOverview_v1.sql/v2.sql directly, as a follow-up
 - [ ] Decide whether to reinstate the @ColumnList column-subset feature (carried over
       from Session 3, still open)
-- [ ] Confirm whether to commit the v3/ additions to the repo
+- [ ] Confirm whether to commit the new index script and the corrected report
 
 ================================================================================
 END OF LOG

@@ -79,7 +79,7 @@ this file is.
 | Original issue | What the plan confirms/changes |
 |---|---|
 | #21 - "Missing execution plan analysis" | **Resolved by this document** - see full breakdown below |
-| #3 - EBill `ROW_NUMBER()` subquery | Confirmed and quantified: forces a **~4.5 million row sort**, ~32% of total query cost. The original's recommended fix (wrap in a CTE) does **not** fix this - see below |
+| #3 - EBill `ROW_NUMBER()` subquery | Confirmed and quantified: forces a **~4.5 million row sort**, ~32% of total query cost. Root cause is more specific than first thought - see below (corrected from an earlier draft of this document) |
 | #4 / #9 - View joins / LEFT JOIN row multiplication | Confirmed and quantified: the `vw_StatusDocs` join alone **more than doubles the row count** (222,165 → 491,461) because of how `@Tracked`'s default value behaves |
 | #11 - Plan cache pollution from dynamic SQL | Quantified: compiling **this one query text** costs ~2.6 seconds of CPU and ~140 MB of memory - multiplied by however many distinct filter combinations get called |
 | #13 - Missing index analysis | Optimizer emitted **zero** missing-index recommendations for this call - the cost is concentrated in a few specific, identifiable places (see below), not general "add more indexes" |
@@ -100,6 +100,7 @@ Top-level statement stats:
 | `CompileMemory` | 143,928 KB (~140 MB) |
 | `DegreeOfParallelism` | **None (serial)** |
 | `NonParallelPlanReason` | `CouldNotGenerateValidParallelPlan` |
+| `StatementOptmEarlyAbortReason` | **`TimeOut`** |
 | Missing index recommendations | **None** |
 | Columns with no statistics | **None** |
 | `CONVERT_IMPLICIT` warnings | **None** |
@@ -110,45 +111,78 @@ and costs over 1,150 optimizer cost units to compile a plan for - and that plan
 compilation alone burns ~2.6 CPU-seconds and ~140 MB of memory, every time the
 dynamic SQL text changes.
 
+Also worth flagging on its own: `StatementOptmEarlyAbortReason="TimeOut"` means the
+optimizer did not finish searching the plan space for this query before its time
+budget ran out - it returned the best plan it had found so far, not necessarily the
+best plan that exists. For a query this complex (165 plan operators), that's not
+surprising, but it means the chosen plan shape shouldn't be treated as provably
+optimal even for the parts of it that look reasonable; a simpler query (fewer
+columns, fewer joined branches) gives the optimizer a better chance of finding a good
+plan within its budget, independent of any specific index fix below.
+
 ---
 
-## Issue #3 Revisited: The EBill `ROW_NUMBER()` Sort Is ~32% of Total Cost, and a CTE Doesn't Fix It
+## Issue #3 Revisited: The EBill `ROW_NUMBER()` Sort Is ~32% of Total Cost - Corrected
+
+**Correction (superseding an earlier draft of this section)**: this section originally
+proposed a `CREATE INDEX ... ON dbo.Fact_EBill (CaseId, [Approved Date] DESC)` as the
+fix. Digging into the plan's column-level detail (not just its cost summary) shows
+that index cannot do what was claimed - see below for what the evidence actually
+supports. The runnable version of what *is* actionable here is in
+`v3/GVOverview_v3_Fact_EBill_Index.sql`.
 
 The plan shows this operator chain (reading bottom-up, as data flows):
 
 ```
-Clustered/Index scan of Fact_EBill (base rows)
-  -> Sort                (EstRows=4,516,200  Cost=365.34)
-  -> Window Aggregate     (EstRows=4,516,200  Cost=365.385)   <- computes ROW_NUMBER()
+Clustered Index Scan of Fact_EBill, full table (1,208,880 rows)
+  -> Hash Match joins to Dim_Company, Dim_Beneficiary, Dim_Project, Dim_User (x2)
+     (this is where [Dim_Project].[CaseId] first becomes available)
+  -> Sort                (EstRows=4,516,200  Cost=365.34)   <- sorts by CaseId, then ApprovedDate DESC
+  -> Window Aggregate     (EstRows=4,516,200  Cost=365.385)  <- computes ROW_NUMBER()
   -> Compute Scalar / Filter -> RN = 1
 ```
 
-**The `Sort` here is sorting an estimated 4.5 million rows** so that
-`ROW_NUMBER() OVER (PARTITION BY CaseId ORDER BY [Approved Date] DESC)` can be
-computed. At 365 cost units against a total query cost of 1,153.63, **this single
-branch is responsible for roughly a third of the entire query's estimated cost** -
-more than the 15-25% the original analysis estimated for this issue.
+At 365 cost units against a total query cost of 1,153.63, **this branch is
+responsible for roughly a third of the entire query's estimated cost** - more than
+the 15-25% the original analysis estimated for this issue. That part of the original
+finding holds up. Two things about the fix don't:
 
-**Important correction to the original recommendation**: `v1/GVOverview_Performance_Analysis_Report_v1.md`'s
-fix for this issue was to wrap the subquery in a CTE (which `GVOverview_v1.sql` did
-adopt - it's the `EBillLatest` CTE). A CTE and a derived-table subquery are logically
-identical to the optimizer, so **rewriting this as a CTE has no effect on this Sort
-operator by itself.** The sort exists because there's no index on the underlying
-`Fact_EBill` table that already presents rows in `(CaseId, [Approved Date] DESC)`
-order - the *only* thing that removes this cost is that index:
+1. **`CaseId` is not a column on `dbo.Fact_EBill`.** The plan's `Sort/OrderBy` element
+   names the sort key explicitly as `[Dim_Project].[CaseId]` - it only exists after
+   `Fact_EBill` (via its `Project_SK` column) is joined to `Dim_Project`. A
+   `CREATE INDEX` naming a `CaseId` column directly on `Fact_EBill` would fail with
+   "invalid column name" - it isn't a valid script to run.
+2. **Even an index on `Fact_EBill`'s own `Project_SK` wouldn't reliably remove the
+   Sort.** Between the base table and the Sort, the plan uses **Hash Match** joins to
+   `Dim_Company`, `Dim_Beneficiary`, `Dim_Project`, and `Dim_User` (twice, for
+   manager/assistant lookups). Hash Match does not preserve input row order - so even
+   perfectly pre-sorted input from an index would arrive at the Sort in hash-bucket
+   order, not `CaseId`/`ApprovedDate` order. `GVOverview_v1_VALIDATION.sql`'s
+   commented-out EBill index suggestion, and this document's earlier draft, both
+   assumed a simpler join shape than what the plan actually shows.
 
-```sql
-CREATE INDEX IX_Fact_EBill_CaseId_ApprovedDate
-  ON dbo.Fact_EBill (CaseId, [Approved Date] DESC)
-  INCLUDE ([Fee Status]);
-```
+**What the plan additionally reveals, and what the real fix looks like**: `Fact_EBill`
+is read via a full, *unfiltered* Clustered Index Scan here - every row of the entire
+table, not just the requested company's. That's because the `EBillLatest` CTE (v1/v2)
+- and the equivalent unnamed derived table in the original procedure - computes
+`ROW_NUMBER()` over the *entire* `rpt.vw_EBill` view with no company filter at all;
+the company filter is only applied later, against `pb`, after the `LEFT JOIN`. This
+is true in all three versions (original, v1, v2) equally - it is not something the v1
+refactor introduced or fixed. Filtering to one company doesn't change which row is
+"latest" for a case in that company, so pushing a company filter into the CTE/subquery
+*before* the windowing is logically safe and would let the engine window over a
+tiny fraction of the rows it currently processes - this is the highest-value fix
+identified for this issue, and it is a query change, not an index.
 
-With that index in place, SQL Server can walk `Fact_EBill` already in the order the
-window function needs and compute `ROW_NUMBER()` as a stream, eliminating the sort
-entirely. `GVOverview_v1_VALIDATION.sql`'s "recommended indexes" section already
-listed an EBill index as a commented-out suggestion ("if view is based on table") -
-this plan confirms it's not optional, it's the single biggest lever available on this
-query.
+**What an index can still legitimately help with**: since the base
+`Fact_EBill` read is a full scan regardless (no filter is applied to it at that
+point), a narrow covering nonclustered index - containing only the columns the
+`EBillLatest` computation actually needs (`Project_SK`, `ApprovedDate`, `FeeStatus`)
+- lets the engine scan that much smaller structure instead of the full, wide
+clustered index. That's a real, low-risk win on the I/O for this one scan
+(`EstimateIO` currently 121.9 on the clustered scan); it does **not** remove the Sort.
+See `v3/GVOverview_v3_Fact_EBill_Index.sql` for the corrected, runnable script and its
+caveats.
 
 ---
 
@@ -285,11 +319,13 @@ predicate function, not a change to `GVOverview*.sql`. Concretely:
 
 ## Recommendations Going Forward
 
-1. **Add the `Fact_EBill (CaseId, [Approved Date] DESC) INCLUDE ([Fee Status])`
-   index.** This is the single highest-confidence, lowest-risk fix identified here -
-   it removes a sort estimated at ~32% of total query cost and doesn't change any
-   query logic in any version (original, v1, or v2 all compute the same ROW_NUMBER()
-   window).
+1. **Filter the `EBillLatest` CTE/subquery by the requested company before computing
+   `ROW_NUMBER()`.** This is the highest-value fix for the ~32%-of-total-cost Sort,
+   since it's currently computed over the entire warehouse's EBill history on every
+   call regardless of `@CompanyIds`. It's a query change, not an index - see Issue #3
+   above. Apply `v3/GVOverview_v3_Fact_EBill_Index.sql`'s covering index alongside it
+   for a smaller, complementary win on the base table read (it does not by itself
+   remove the Sort - see that script's header for why).
 2. **Confirm the `@Tracked` default is intentional** with whoever owns the report's
    requirements, given it roughly doubles row count for every default-parameter call.
    If it is intentional, consider renaming/documenting it so a caller doesn't
